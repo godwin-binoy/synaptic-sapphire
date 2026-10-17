@@ -19,9 +19,21 @@ impl Scale {
     pub const DORIAN: Scale = Scale { name: "dorian", steps: &[2, 1, 2, 2, 2, 1, 2] };
     /// Mixolydian — dominant-flavoured major, avoids the leading tone.
     pub const MIXOLYDIAN: Scale = Scale { name: "mixolydian", steps: &[2, 2, 1, 2, 2, 1, 2] };
+    /// Lydian — floating major with a #11, very cinematic/dreamy.
+    pub const LYDIAN: Scale = Scale { name: "lydian", steps: &[2, 2, 2, 1, 2, 2, 1] };
+    /// Harmonic minor — the Spanish-noir flavour for moody bridges.
+    pub const HARMONIC_MINOR: Scale = Scale { name: "harmonic minor", steps: &[2, 1, 2, 2, 1, 3, 1] };
 
     /// Every scale the generator may choose from.
-    pub const ALL: [Scale; 4] = [Scale::MAJOR, Scale::MINOR, Scale::DORIAN, Scale::MIXOLYDIAN];
+    pub const ALL: [Scale; 6] = [
+        Scale::MAJOR, Scale::MINOR, Scale::DORIAN, Scale::MIXOLYDIAN, Scale::LYDIAN,
+        Scale::HARMONIC_MINOR,
+    ];
+
+    /// Look up a scale by its canonical name (used when config overrides keys).
+    pub fn by_name(name: &str) -> Option<Scale> {
+        Self::ALL.iter().find(|s| s.name == name).cloned()
+    }
 
     /// Number of degrees (usually 7).
     #[inline]
