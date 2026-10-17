@@ -133,7 +133,7 @@ fn templates_for(style: Style) -> Vec<Vec<(usize, &'static str)>> {
             vec![(3, "maj9"), (4, "m9"), (0, "maj7"), (5, "m9")],         // IVmaj9 v m7-style soul loop
             vec![(0, "m9"), (1, "m7"), (5, "maj7"), (3, "m9")],           // i9 ii7 VI iv9
             vec![(5, "m9"), (1, "m9"), (4, "dom7"), (0, "maj9")],         // vi9 ii9 V9 Imaj9
-            vec![(2, "m7"), (3, "maj7"), (5, "m9"), (0, "add9")],         // iii IV vi add9
+            vec![(2, "m7"), (3, "maj7"), (5, "m9"), (0, "maj9")],         // iii IV vi I
             vec![(0, "maj9"), (5, "m9"), (3, "maj7"), (4, "dom7")],       // I vi IV V (doo-wop, soulified)
         ],
         Style::Ambient => vec![
@@ -168,6 +168,20 @@ const NEIGHBOURS: [(usize, &[usize], &[u32]); 7] = [
     (5, &[3, 6, 1], &[3, 1, 2]),
     (6, &[4, 1, 5], &[3, 2, 1]),
 ];
+
+impl Style {
+    /// Parse the UI-facing `chords.progression_style` string. Unknown values
+    /// fall back to the house sound so bad input can never break generation.
+    pub fn from_config(s: &str) -> Style {
+        match s {
+            "neo_soul" => Style::NeoSoul,
+            "ambient" => Style::Ambient,
+            "bluesy" => Style::Bluesy,
+            "mixed" => Style::Mixed,
+            _ => Style::LofiJazz,
+        }
+    }
+}
 
 /// Tunables for the progression planner; defaults reproduce the original
 /// behaviour exactly (swap weight 1, hold chance 1-in-4).

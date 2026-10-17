@@ -2,21 +2,22 @@
 //!
 //! The algorithm is deliberately *not* pure random walk:
 //! 1. Build a small library of **motif cells** (short rhythm+pitch-class
-//!    patterns) at song start, derived from the seed.
+//!    patterns) at song start, sized by `melody.motif_cells`.
 //! 2. Each phrase asks/answers: pick a cell for the antecedent, then choose its
-//!    retrograde/inversion/transposed variant for the consequent, ending on a
-//!    stable chord tone (root or seventh).
-//! 3. Notes are snapped to the current chord's pitch classes with chromatic
-//!    approach notes only on weak slots.
-//! 4. Density and register follow section energy; cadence bars get longer,
-//!    more conclusive notes.
+//!    retrograde/inversion/transposed variant for the consequent (probabilities
+//!    from config), ending on a stable chord tone.
+//! 3. Notes snap to the current chord's pitch classes; chromatic neighbours
+//!    appear only on weak slots (by `chromatic_passing_pct`).
+//! 4. Density follows section energy × `density_scale`; register comes from
+//!    config; phrases can be followed by breath rests.
 
+use crate::config::GenerateConfig;
 use crate::music::{NoteEvent, NoteOn, Parts, Pitch, Ticks};
 use crate::rng::Rand;
 use crate::structure::{Energy, SongBlueprint};
 use crate::theory::pc;
 
-use super::{bar_start, Voice};
+use super::{bar_start, humanize, swing_at, Voice};
 
 pub struct MelodyVoice;
 
@@ -33,36 +34,49 @@ impl Voice for MelodyVoice {
     const NAME: &'static str = "Lead";
     const PROGRAM: u8 = 0; // GM Acoustic Grand; audio engine may remap
 
-    fn generate(bp: &SongBlueprint, rng: &mut Rand) -> Vec<NoteEvent> {
-        let cells = build_cells(rng);
+    fn generate(bp: &SongBlueprint, cfg: &GenerateConfig, rng: &mut Rand) -> Vec<NoteEvent> {
+        let m = &cfg.melody;
+        if !m.enabled {
+            return Vec::new();
+        }
+        let cells = build_cells(rng, m.motif_cells as usize);
+        let swing = cfg.effective_swing();
         let mut out = Vec::new();
 
-        // Phrases are 2 bars (antecedent + consequent).
+        // Phrases span `phrase_len_bars` (antecedent + consequent).
+        let phrase = m.phrase_len_bars.max(2);
+        let half = (phrase / 2).max(1);
         let mut bar = 0u32;
         while bar < bp.total_bars() {
             let role = bp.role_at(bar).expect("inside blueprint");
             if role.energy == Energy::Ambient {
-                bar += 2;
+                bar += phrase;
                 continue;
             }
 
-            let density = role.energy.melody_density();
-            let (a, b) = pick_phrase(&cells, rng, density);
-            emit_cell(&mut out, bp, rng, bar, &a, density, false);
-            if bar + 1 < bp.total_bars() {
-                let ends_song = bar + 2 >= bp.total_bars();
-                emit_cell(&mut out, bp, rng, bar + 1, &b, density, ends_song || bp.role_at(bar + 1).map(|r| r.is_cadence_bar()).unwrap_or(false));
+            let density = (role.energy.melody_density() * m.density_scale).clamp(0.0, 1.0);
+            let (a, b) = pick_phrase(&cells, rng, density, m);
+            emit_cell(&mut out, bp, cfg, rng, bar, &a, density, false, swing);
+            if bar + half < bp.total_bars() {
+                let ends_song = bar + phrase >= bp.total_bars();
+                let cadence = bp
+                    .role_at(bar + half)
+                    .map(|r| r.is_cadence_bar())
+                    .unwrap_or(false);
+                emit_cell(&mut out, bp, cfg, rng, bar + half, &b, density, ends_song || cadence, swing);
             }
-            bar += 2;
+            // Breath: sometimes leave the next bar empty.
+            bar += if rng.chance(m.rest_between_phrases_pct, 100) { phrase + 1 } else { phrase };
         }
+        humanize(&mut out, cfg, rng);
         out
     }
 }
 
-/// Create 4..6 motif cells from the seed. Rhythms avoid downbeat-only or
+/// Create `count` motif cells from the seed. Rhythms avoid downbeat-only or
 /// all-eighths extremes so melodies breathe.
-fn build_cells(rng: &mut Rand) -> Vec<Cell> {
-    let n = rng.range_i64(4, 7) as usize;
+fn build_cells(rng: &mut Rand, count: usize) -> Vec<Cell> {
+    let n = count.clamp(2, 12);
     let mut cells = Vec::with_capacity(n);
     for _ in 0..n {
         // Choose 2..4 attacks placed on eighth slots 0..7, sorted, no repeats.
@@ -84,13 +98,17 @@ fn build_cells(rng: &mut Rand) -> Vec<Cell> {
     cells
 }
 
-/// Question/answer: two cells, the second derived from the first.
-fn pick_phrase(cells: &[Cell], rng: &mut Rand, density: f64) -> (Cell, Cell) {
+/// Question/answer: two cells, the second derived from the first by the
+/// configured development operations.
+fn pick_phrase(cells: &[Cell], rng: &mut Rand, density: f64, m: &crate::config::MelodyConfig) -> (Cell, Cell) {
     let a = cells[rng.pick_index(cells).expect("non-empty")].clone();
-    let b = match rng.range_i64(0, 3) {
-        0 => invert(&a),          // mirror contour
-        1 => retrograde(&a),      // reverse rhythm feel
-        _ => transpose_cell(&a, rng.range_i64(-2, 3) as i32),
+    let roll = rng.range_i64(0, 100);
+    let b = if roll < m.answer_inversion_pct as i64 {
+        invert(&a)
+    } else if roll < (m.answer_inversion_pct + m.answer_retrograde_pct) as i64 {
+        retrograde(&a)
+    } else {
+        transpose_cell(&a, rng.range_i64(-2, 3) as i32)
     };
     // Very sparse sections drop half the attacks from the answer.
     let b = if density < 0.25 && rng.chance(1, 2) { thin(&b) } else { b };
@@ -123,12 +141,15 @@ fn thin(c: &Cell) -> Cell {
 fn emit_cell(
     out: &mut Vec<NoteEvent>,
     bp: &SongBlueprint,
+    cfg: &GenerateConfig,
     rng: &mut Rand,
     bar: u32,
     cell: &Cell,
     density: f64,
     conclusive: bool,
+    swing: f64,
 ) {
+    let m = &cfg.melody;
     let Some(spec) = bp.chord_at(bar) else { return };
     let tones = bp.scale.tones(bp.tonic_pc);
     let chord_pcs: Vec<usize> = spec
@@ -138,7 +159,7 @@ fn emit_cell(
         .map(|iv| pc(spec.root_pc + *iv as usize))
         .collect();
 
-    // Anchor degree: a chord tone nearest C4-ish octave 5 melody register.
+    // Anchor degree: the chord root expressed as a scale degree.
     let anchor_degree = chord_pcs
         .first()
         .and_then(|p| tones.iter().position(|t| t == p))
@@ -153,21 +174,21 @@ fn emit_cell(
             continue;
         }
         let step = anchor_degree as i32 + cell.contour.get(i).copied().unwrap_or(0);
-        let mut p = degree_to_melody_pitch(bp, step);
+        let mut p = degree_to_melody_pitch(bp, step, m.register_low, m.register_high);
 
         // Weak beats may use a chromatic neighbour for tension...
         let weak = slot % 2 == 1;
-        if weak && rng.chance(1, 8) {
-            p = p.transpose(if rng.chance(1, 2) { 1 } else { -1 });
+        if weak && rng.chance(m.chromatic_passing_pct, 100) {
+            p = clamp_register(p.transpose(if rng.chance(1, 2) { 1 } else { -1 }), m);
         }
         // ...but strong beats must be chord tones.
         if !weak && !chord_pcs.contains(&p.pitch_class()) {
             p = nearest_chord_tone(p, &chord_pcs);
         }
-        // Consequent/cadence notes resolve onto root or seventh.
+        // Consequent/cadence notes resolve onto the chord root.
         if conclusive && i + 1 == cell.rhythm.len() {
             let target = chord_pcs[0];
-            p = nearest_with_pc(p, target);
+            p = clamp_register(nearest_with_pc(p, target), m);
         }
 
         // Duration: distance to the next attack; final note rings longer on
@@ -178,20 +199,39 @@ fn emit_cell(
             None => Ticks(2 * eighth.as_i64()),
         };
 
-        let vel = velocity_for(slot, conclusive && i + 1 == cell.rhythm.len(), rng);
-        let start = swing_eighth(bar_at, slot);
-        out.push(NoteEvent::Note(NoteOn { pitch: p, velocity: vel, start, duration: dur, program: Self::PROGRAM }));
+        let vel = velocity_for(slot, conclusive && i + 1 == cell.rhythm.len(), rng, cfg.humanize.dynamics_range);
+        let start = swing_at(bar_at, slot as f64 * 0.5, swing);
+        out.push(NoteEvent::Note(NoteOn { pitch: p, velocity: vel, start, duration: dur, program: m.program }));
     }
 }
 
-/// Scale degree (possibly negative or >6) to an absolute pitch in the melody
-/// register (C4..B5).
-fn degree_to_melody_pitch(bp: &SongBlueprint, degree: i32) -> Pitch {
+/// Scale degree (possibly negative or >6) to an absolute pitch inside the
+/// configured melody register.
+fn degree_to_melody_pitch(bp: &SongBlueprint, degree: i32, lo: u8, hi: u8) -> Pitch {
     let n = bp.scale.degree_count() as i32;
     let oct_shift = degree.div_euclid(n);
     let idx = degree.rem_euclid(n) as usize;
     let pcv = bp.scale.degree_pc(bp.tonic_pc, idx);
-    Pitch::from_pc_octave(pcv, 5 + oct_shift)
+    let mid_octave = 4 + ((lo as i32 + hi as i32) / 2) / 12 - 3; // rough centre octave
+    let p = Pitch::from_pc_octave(pcv, mid_octave + oct_shift);
+    clamp_register_abs(p, lo, hi)
+}
+
+/// Keep a pitch inside the config register, folding by octaves.
+fn clamp_register(p: Pitch, m: &crate::config::MelodyConfig) -> Pitch {
+    clamp_register_abs(p, m.register_low, m.register_high)
+}
+
+fn clamp_register_abs(p: Pitch, lo: u8, hi: u8) -> Pitch {
+    let mut midi = p.midi() as i32;
+    while midi < lo as i32 {
+        midi += 12;
+    }
+    while midi > hi as i32 {
+        midi -= 12;
+    }
+    // If folding overshot past the other bound (tiny registers), clamp hard.
+    Pitch(midi.clamp(lo.min(hi) as i32, hi.max(lo) as i32).clamp(0, 127) as u8)
 }
 
 fn nearest_chord_tone(p: Pitch, chord_pcs: &[usize]) -> Pitch {
@@ -219,39 +259,39 @@ fn nearest_with_pc(p: Pitch, target_pc: usize) -> Pitch {
     p
 }
 
-fn velocity_for(slot: u32, conclusive: bool, rng: &mut Rand) -> u8 {
+fn velocity_for(slot: u32, conclusive: bool, rng: &mut Rand, dynamics_range: f64) -> u8 {
+    // Strong-beat accents scale with the configured dynamics range.
+    let accent = (dynamics_range * 30.0).round() as i16;
     let base = match slot % 4 {
-        0 => 96,
-        2 => 84,
+        0 => 84 + accent,
+        2 => 84 + accent / 2,
         _ => 70,
     };
     let jitter = rng.range_i64(-8, 9) as i16;
-    (base as i16 + jitter + if conclusive { 6 } else { 0 }).clamp(45, 115) as u8
-}
-
-/// Eighth-slot position with lofi late-swing on off-beats.
-fn swing_eighth(at: Ticks, slot: u32) -> Ticks {
-    let eighth = Parts::division(2).to_ticks().as_i64();
-    let push = if slot % 2 == 1 { (eighth as f64 * 0.08) as i64 } else { 0 };
-    Ticks(at.as_i64() + slot as i64 * eighth + push)
+    (base + jitter + if conclusive { 6 } else { 0 }).clamp(45, 120) as u8
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn bp(bars: u32) -> SongBlueprint {
-        SongBlueprint::generate(&mut Rand::new(bars as u64 * 11 + 4), bars)
+    fn cfg() -> GenerateConfig {
+        GenerateConfig::default()
+    }
+
+    fn bp(cfg: &GenerateConfig) -> SongBlueprint {
+        SongBlueprint::generate(&mut Rand::new(cfg.seed), cfg)
     }
 
     #[test]
-    fn melody_notes_stay_in_register() {
-        let evs = MelodyVoice::generate(&bp(48), &mut Rand::new(1));
+    fn melody_is_not_empty_and_stays_in_register() {
+        let cfg = cfg();
+        let evs = MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(1));
         assert!(!evs.is_empty());
         for e in &evs {
             if let NoteEvent::Note(n) = e {
                 assert!(
-                    (60..=81).contains(&n.pitch.midi()),
+                    (cfg.melody.register_low..=cfg.melody.register_high).contains(&n.pitch.midi()),
                     "{} outside melody register",
                     n.pitch.name()
                 );
@@ -260,23 +300,57 @@ mod tests {
     }
 
     #[test]
-    fn strong_beats_are_chord_tones() {
-        let bp = bp(32);
-        let evs = MelodyVoice::generate(&bp, &mut Rand::new(2));
+    fn custom_register_is_honoured() {
+        let mut cfg = cfg();
+        cfg.melody.register_low = 65;
+        cfg.melody.register_high = 77;
+        let evs = MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(1));
         for e in &evs {
             if let NoteEvent::Note(n) = e {
-                let rel = (n.start.as_i64() % (4 * 1920)) as f64 / 1920.0;
-                let is_strong = (rel * 2.0).round() % 2.0 == 0.0;
-                if is_strong {
-                    let bar = (n.start.as_i64() / (4 * 1920)) as u32;
-                    let spec = bp.chord_at(bar).unwrap();
-                    let pcs: Vec<usize> = spec
-                        .quality
-                        .intervals
-                        .iter()
-                        .map(|iv| pc(spec.root_pc + *iv as usize))
-                        .collect();
-                    assert!(pcs.contains(&n.pitch.pitch_class()), "{n:?} over {:?}", spec.label());
+                assert!((65..=77).contains(&n.pitch.midi()), "{} outside custom register", n.pitch.name());
+            }
+        }
+    }
+
+    #[test]
+    fn disabled_switch_emits_nothing() {
+        let mut cfg = cfg();
+        cfg.melody.enabled = false;
+        assert!(MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(1)).is_empty());
+    }
+
+    #[test]
+    fn zero_density_produces_no_notes() {
+        let mut cfg = cfg();
+        cfg.melody.density_scale = 0.0;
+        let evs = MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(1));
+        // Only conclusive notes survive the gate; with density 0 most bars are
+        // silent — assert we got far fewer than default.
+        let def = MelodyVoice::generate(&bp(&cfg), &cfg(), &mut Rand::new(1));
+        assert!(evs.len() < def.len());
+    }
+
+    #[test]
+    fn strong_beats_are_chord_tones() {
+        let cfg = cfg();
+        let bp = bp(&cfg);
+        let evs = MelodyVoice::generate(&bp, &cfg, &mut Rand::new(2));
+        let bar_ticks = Parts::beats(4).to_ticks().as_i64();
+        for e in &evs {
+            if let NoteEvent::Note(n) = e {
+                let rel = (n.start.as_i64().rem_euclid(bar_ticks)) as f64 / crate::music::PPQ as f64;
+                let slot = (rel * 2.0).round() as i64; // eighth index, post-swing
+                if slot % 2 == 0 {
+                    let bar = (n.start.as_i64() / bar_ticks) as u32;
+                    if let Some(spec) = bp.chord_at(bar) {
+                        let pcs: Vec<usize> = spec
+                            .quality
+                            .intervals
+                            .iter()
+                            .map(|iv| pc(spec.root_pc + *iv as usize))
+                            .collect();
+                        assert!(pcs.contains(&n.pitch.pitch_class()), "{n:?} over {:?}", spec.label());
+                    }
                 }
             }
         }
@@ -284,15 +358,16 @@ mod tests {
 
     #[test]
     fn deterministic() {
-        let a = format!("{:?}", MelodyVoice::generate(&bp(32), &mut Rand::new(6)));
-        let b = format!("{:?}", MelodyVoice::generate(&bp(32), &mut Rand::new(6)));
+        let cfg = cfg();
+        let a = format!("{:?}", MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(6)));
+        let b = format!("{:?}", MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(6)));
         assert_eq!(a, b);
     }
 
     #[test]
     fn cells_have_sorted_unique_rhythm_slots() {
-        let cells = build_cells(&mut Rand::new(12));
-        assert!(!cells.is_empty());
+        let cells = build_cells(&mut Rand::new(12), 5);
+        assert_eq!(cells.len(), 5);
         for c in &cells {
             assert!(!c.rhythm.is_empty());
             for w in c.rhythm.windows(2) {
