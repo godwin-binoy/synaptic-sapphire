@@ -92,35 +92,69 @@ fn roman_degree(d: usize) -> String {
     NUMERALS.get(d % 7).copied().unwrap_or("?").to_string()
 }
 
-/// Curated template progressions as `(degree, quality-suffix)` sequences.
-/// These encode classic lofi moves: ii-V-I variants, IV-vi loops, and
-/// minor-key cycles around i-VII-VI. Degrees are zero-based.
-fn templates() -> Vec<Vec<(usize, &'static str)>> {
-    vec![
-        // Major-flavoured loops
-        vec![(1, "m7"), (5, "m7"), (0, "maj9"), (3, "maj7")],     // ii vi I maj7 IV
-        vec![(3, "maj7"), (5, "m7"), (1, "m7"), (4, "dom7")],     // IV vi ii V
-        vec![(0, "maj7"), (3, "maj7"), (1, "m7"), (4, "dom7")],   // I IV ii V
-        vec![(5, "m7"), (1, "m7"), (4, "maj7"), (0, "maj9")],     // vi ii IV I
-        // Minor-flavoured loops
-        vec![(0, "m9"), (5, "maj7"), (3, "m7"), (4, "dom7")],     // i VI iv V
-        vec![(0, "m7"), (6, "maj7"), (5, "maj7"), (4, "m7")],     // i VII VI v
-        vec![(1, "m7b5"), (4, "dom7"), (0, "m9"), (0, "m7")],     // ii° V i i
-        vec![(3, "m7"), (6, "maj7"), (0, "m9"), (4, "sus4")],     // iv VII i vsus
-    ]
+/// Harmonic vocabulary a plan may draw from. Mirrors the UI-facing
+/// `ProgressionStyle` but lives in the theory layer so this module stays free
+/// of config dependencies (the pipeline translates between them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Style {
+    /// Curated lofi/jazz loops — the house sound.
+    LofiJazz,
+    /// Neo-soul: dense extensions, slow motion, minor 4/5 cycles.
+    NeoSoul,
+    /// Ambient: long pedal-point drones, minimal movement.
+    Ambient,
+    /// Bluesy turnarounds and quick changes.
+    Bluesy,
+    /// Pick per-plan by seed from all of the above.
+    Mixed,
 }
 
-/// Map a suffix string back onto a known quality. Falls back to minor 7.
-fn quality_from_suffix(suffix: &str) -> ChordQuality {
-    match suffix {
-        "m7" => ChordQuality::minor_7(),
-        "maj7" => ChordQuality::major_7(),
-        "dom7" => ChordQuality::dom_7(),
-        "maj9" => ChordQuality::major_9(),
-        "m9" => ChordQuality::minor_9(),
-        "m7b5" => ChordQuality::half_dim(),
-        "sus4" => ChordQuality::sus4(),
-        _ => ChordQuality::minor_7(),
+/// Curated template progressions grouped by style, as `(degree, quality-suffix)`
+/// sequences. Degrees are zero-based scale steps; qualities are looked up with
+/// [`quality_from_suffix`]. These encode classic moves: ii-V-I variants, IV-vi
+/// loops, minor cycles around i-VII-VI, soul 4/5 vamp chains, blues runarounds.
+fn templates_for(style: Style) -> Vec<Vec<(usize, &'static str)>> {
+    let lofi = vec![
+        // Major-flavoured loops
+        vec![(1, "m7"), (5, "m7"), (0, "maj9"), (3, "maj7")], // ii vi I maj7 IV
+        vec![(3, "maj7"), (5, "m7"), (1, "m7"), (4, "dom7")], // IV vi ii V
+        vec![(0, "maj7"), (3, "maj7"), (1, "m7"), (4, "dom7")], // I IV ii V
+        vec![(5, "m7"), (1, "m7"), (4, "maj7"), (0, "maj9")], // vi ii IV I
+        // Minor-flavoured loops
+        vec![(0, "m9"), (5, "maj7"), (3, "m7"), (4, "dom7")], // i VI iv V
+        vec![(0, "m7"), (6, "maj7"), (5, "maj7"), (4, "m7")], // i VII VI v
+        vec![(1, "m7b5"), (4, "dom7"), (0, "m9"), (0, "m7")], // ii° V i i
+        vec![(3, "m7"), (6, "maj7"), (0, "m9"), (4, "sus4")], // iv VII i vsus
+    ];
+    match style {
+        Style::LofiJazz => lofi,
+        Style::NeoSoul => vec![
+            vec![(1, "m9"), (4, "dom7"), (0, "maj9"), (0, "maj9")],       // ii9 V9 I9 I9
+            vec![(3, "maj9"), (4, "m9"), (0, "maj7"), (5, "m9")],         // IVmaj9 v m7-style soul loop
+            vec![(0, "m9"), (1, "m7"), (5, "maj7"), (3, "m9")],           // i9 ii7 VI iv9
+            vec![(5, "m9"), (1, "m9"), (4, "dom7"), (0, "maj9")],         // vi9 ii9 V9 Imaj9
+            vec![(2, "m7"), (3, "maj7"), (5, "m9"), (0, "add9")],         // iii IV vi add9
+            vec![(0, "maj9"), (5, "m9"), (3, "maj7"), (4, "dom7")],       // I vi IV V (doo-wop, soulified)
+        ],
+        Style::Ambient => vec![
+            vec![(0, "m9"), (0, "m9"), (5, "maj7"), (5, "maj7")],         // tonic drone drifting to VI
+            vec![(0, "maj9"), (0, "maj9"), (3, "maj7"), (6, "maj7")],     // I pedal, IV then VII shimmer
+            vec![(5, "m9"), (5, "m9"), (2, "m7"), (0, "maj9")],           // vi drift into relative major
+            vec![(0, "sus4"), (0, "sus4"), (3, "maj7"), (3, "maj7")],     // sus pedal breathing
+        ],
+        Style::Bluesy => vec![
+            vec![(0, "dom7"), (3, "dom7"), (0, "dom7"), (0, "dom7")],     // quick-to-IV blues bar one
+            vec![(0, "dom7"), (5, "m7"), (1, "m7"), (4, "dom7")],         // I vi ii V (jazz blues)
+            vec![(4, "dom7"), (3, "dom7"), (0, "dom7"), (5, "dom7")],     // V IV I VI runaround
+            vec![(0, "m9"), (0, "m9"), (4, "dom7"), (3, "m7")],           // minor blues vamp
+        ],
+        Style::Mixed => {
+            let mut all = lofi;
+            all.extend(templates_for(Style::NeoSoul));
+            all.extend(templates_for(Style::Ambient));
+            all.extend(templates_for(Style::Bluesy));
+            all
+        }
     }
 }
 
@@ -135,15 +169,46 @@ const NEIGHBOURS: [(usize, &[usize], &[u32]); 7] = [
     (6, &[4, 1, 5], &[3, 2, 1]),
 ];
 
+/// Tunables for the progression planner; defaults reproduce the original
+/// behaviour exactly (swap weight 1, hold chance 1-in-4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlanOptions {
+    /// Chance numerator (out of 100) that an interior bar gets reharmonised
+    /// via the degree walk instead of copying the template.
+    pub reharmonise_chance_pct: u32,
+    /// Chance numerator (out of 100) that adjacent chords merge into 2-bar holds.
+    pub two_bar_hold_chance_pct: u32,
+    /// Which harmonic vocabulary to draw templates from.
+    pub style: Style,
+}
+
+impl Default for PlanOptions {
+    fn default() -> Self {
+        PlanOptions { reharmonise_chance_pct: 100, two_bar_hold_chance_pct: 25, style: Style::LofiJazz }
+    }
+}
+
+/// Build a progression covering exactly `bars` bars using default options.
+pub fn plan_progression(rng: &mut Rand, scale: &Scale, tonic_pc: usize, bars: u32) -> HarmonicPlan {
+    plan_progression_with(rng, scale, tonic_pc, bars, &PlanOptions::default())
+}
+
 /// Build a progression covering exactly `bars` bars.
 ///
-/// Algorithm: pick a template loop, repeat it (with occasional re-rolls of the
-/// final cadence bar) until the length is reached, then randomly hold some
-/// chords for two bars to relax the harmonic rhythm. Panics if `bars < 4`.
-pub fn plan_progression(rng: &mut Rand, scale: &Scale, tonic_pc: usize, bars: u32) -> HarmonicPlan {
+/// Algorithm: pick a template loop from the style's pool, repeat it (with
+/// probabilistic re-rolls of interior bars via a Markov degree walk) until the
+/// length is reached, then randomly hold some chords for two bars to relax the
+/// harmonic rhythm. Panics if `bars < 4`.
+pub fn plan_progression_with(
+    rng: &mut Rand,
+    scale: &Scale,
+    tonic_pc: usize,
+    bars: u32,
+    opts: &PlanOptions,
+) -> HarmonicPlan {
     assert!(bars >= 4, "a harmonic plan needs at least 4 bars");
 
-    let pool = templates();
+    let pool = templates_for(opts.style);
     let chosen = rng.pick_index(&pool).expect("non-empty templates");
     let template: Vec<(usize, ChordQuality)> = pool[chosen]
         .iter()
@@ -163,8 +228,11 @@ pub fn plan_progression(rng: &mut Rand, scale: &Scale, tonic_pc: usize, bars: u3
 
     // Cadence variation: replace some interior chords via the degree walk so
     // repeated loops do not feel like exact copies.
-    let swaps = (bars / 8).max(1) as usize;
-    for _ in 0..swaps {
+    let swap_budget = (bars / 8).max(1) as usize;
+    for _ in 0..swap_budget {
+        if !rng.chance(opts.reharmonise_chance_pct, 100) {
+            continue;
+        }
         let idx = rng.range_i64(1, bars as i64 - 1) as usize;
         if idx >= steps.len() {
             continue;
@@ -179,7 +247,7 @@ pub fn plan_progression(rng: &mut Rand, scale: &Scale, tonic_pc: usize, bars: u3
     // Relax the harmonic rhythm: merge adjacent pairs into 2-bar holds.
     let mut idx = 0usize;
     while idx + 1 < steps.len() {
-        if rng.chance(1, 4) {
+        if rng.chance(opts.two_bar_hold_chance_pct, 100) {
             steps[idx].bars = 2;
             steps.remove(idx + 1);
             idx += 1; // skip ahead, avoid cascading merges
