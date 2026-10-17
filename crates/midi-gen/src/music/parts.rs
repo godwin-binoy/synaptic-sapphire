@@ -10,13 +10,13 @@ pub const PPQ: u32 = 1920;
 
 /// A duration given as whole beats plus an exact fraction of a beat.
 ///
-/// Using `(beats, numerator, denominator)` instead of floating point means a
+/// Using `(whole, numerator, denominator)` instead of floating point means a
 /// bar grid such as "sixteenth swing" is represented precisely and always maps
 /// back to an integer number of [`Ticks`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Parts {
     /// Whole beats.
-    pub beats: i64,
+    pub whole: i64,
     /// Fraction numerator, `0 <= num < den`.
     pub num: u32,
     /// Fraction denominator (a power of two or a tuplet divisor). Never zero.
@@ -30,17 +30,17 @@ impl Parts {
     /// If `den == 0`.
     pub fn new(beats: i64, num: u32, den: u32) -> Self {
         assert!(den != 0, "Parts denominator must be non-zero");
-        Parts { beats, num, den }
+        Parts { whole: beats, num, den }
     }
 
     /// Exactly `n` whole beats.
     pub fn beats(n: i64) -> Self {
-        Parts { beats: n, num: 0, den: 1 }
+        Parts { whole: n, num: 0, den: 1 }
     }
 
     /// `1 / den` of a single beat, e.g. `Parts::division(4)` is a quarter note.
     pub fn division(den: u32) -> Self {
-        Parts { beats: 0, num: 1, den }
+        Parts { whole: 0, num: 1, den }
     }
 
     /// Convert to an integer tick count.
@@ -49,7 +49,7 @@ impl Parts {
     /// a non-divisible fraction is rounded to the nearest tick rather than
     /// silently truncated.
     pub fn to_ticks(self) -> Ticks {
-        let whole = self.beats * PPQ as i64;
+        let whole = self.whole * PPQ as i64;
         let frac = (PPQ as i64 * self.num as i64) as f64 / self.den as f64;
         Ticks(whole + frac.round() as i64)
     }
@@ -66,9 +66,9 @@ impl Parts {
     /// Human-readable form used in error messages and CLI output.
     pub fn describe(self) -> String {
         if self.num == 0 {
-            format!("{} beat(s)", self.beats)
+            format!("{} beat(s)", self.whole)
         } else {
-            format!("{} + {}/{} beat(s)", self.beats, self.num, self.den)
+            format!("{} + {}/{} beat(s)", self.whole, self.num, self.den)
         }
     }
 }
@@ -85,7 +85,7 @@ impl std::ops::Add for Parts {
         let den = lcm(self.den, rhs.den);
         let num = self.num * (den / self.den) + rhs.num * (den / rhs.den);
         let carry = (num / den) as i64;
-        Parts { beats: self.beats + rhs.beats + carry, num: num % den, den }
+        Parts { whole: self.whole + rhs.whole + carry, num: num % den, den }
     }
 }
 
@@ -122,9 +122,11 @@ mod tests {
 
     #[test]
     fn adding_parts_is_exact() {
+        // PPQ is beats-per-minute-style quarter notes: a beat is a quarter note,
+        // so 1/4 of a beat + 1/8 of a beat = 3/8 of a beat = 720 ticks at 1920 PPQ.
         let sum = Parts::division(4) + Parts::division(8);
         assert_eq!(sum.to_ticks(), Parts::new(0, 3, 8).to_ticks());
-        assert_eq!(sum.to_ticks().as_i64(), 1440);
+        assert_eq!(sum.to_ticks().as_i64(), 720);
     }
 
     #[test]

@@ -174,6 +174,7 @@ impl Style {
     /// fall back to the house sound so bad input can never break generation.
     pub fn from_config(s: &str) -> Style {
         match s {
+            "lofi_jazz" => Style::LofiJazz,
             "neo_soul" => Style::NeoSoul,
             "ambient" => Style::Ambient,
             "bluesy" => Style::Bluesy,
@@ -290,6 +291,22 @@ pub fn plan_progression_with(
     HarmonicPlan { scale: scale.clone(), tonic_pc, root_octave: 3, steps }
 }
 
+/// Map a chord-symbol suffix used in progression templates onto a concrete
+/// [`ChordQuality`]. Unknown suffixes fall back to a dominant 7th, which is
+/// always playable inside any diatonic context.
+fn quality_from_suffix(suffix: &str) -> ChordQuality {
+    match suffix {
+        "m7" => ChordQuality::minor_7(),
+        "maj7" => ChordQuality::major_7(),
+        "dom7" | "7" => ChordQuality::dom_7(),
+        "m9" => ChordQuality::minor_9(),
+        "maj9" => ChordQuality::major_9(),
+        "m7b5" => ChordQuality::half_dim(),
+        "sus4" => ChordQuality::sus4(),
+        _ => ChordQuality::dom_7(),
+    }
+}
+
 /// Choose a plausible quality for a degree within a scale by inspecting the
 /// actual stacked thirds. Keeps harmony diatonic.
 fn pick_quality(rng: &mut Rand, scale: &Scale, tonic_pc: usize, degree: usize) -> ChordQuality {
@@ -328,7 +345,7 @@ mod tests {
         let expanded = plan.chords();
         assert_eq!(expanded.len(), 8);
         for b in 0..8 {
-            assert_eq!(plan.chord_at_bar(b).unwrap().label(), expanded[b].label());
+            assert_eq!(plan.chord_at_bar(b).unwrap().label(), expanded[b as usize].label());
         }
         assert!(plan.chord_at_bar(8).is_none());
     }

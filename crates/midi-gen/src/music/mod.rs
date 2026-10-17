@@ -11,7 +11,8 @@ mod events;
 
 pub use parts::{Parts, PPQ};
 pub use pitch::{Pitch, PITCH_MAX, PITCH_MIN};
-pub use events::{Chord, NoteEvent, NoteOn, TempoMark};
+pub use events::{MetaTextKind, NoteEvent, Song, TempoMark, Track};
+pub use pitch::{Chord, NoteOn};
 
 /// A position/duration measured in MIDI ticks (PPD quanta).
 ///

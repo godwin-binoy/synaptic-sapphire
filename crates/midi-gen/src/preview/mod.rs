@@ -15,11 +15,11 @@ pub mod synth;
 pub mod wav;
 
 pub use synth::{render_song, RenderedAudio};
-pub use wav::write_wav;
+pub use wav::{wav_bytes, write_wav};
 
 use crate::config::GenerateConfig;
 use crate::music::{NoteEvent, Song};
-use crate::pipeline::composer::generate_song;
+use crate::pipeline::generate_song;
 
 /// Convenience: generate from config and render a preview in one call.
 pub fn preview(cfg: &GenerateConfig) -> Result<RenderedAudio, crate::pipeline::GenerationError> {

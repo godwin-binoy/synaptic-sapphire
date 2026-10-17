@@ -391,6 +391,9 @@ mod tests {
             if matches!(f.kind, SchemaKind::PitchClass) && cur.is_null() {
                 continue; // Option<usize> default null
             }
+            if f.path == "scale" && cur.is_null() {
+                continue; // Option<String> auto-pick default null
+            }
             assert_eq!(&f.default, cur, "default mismatch at `{}`", f.path);
         }
     }

@@ -326,7 +326,7 @@ mod tests {
         let evs = MelodyVoice::generate(&bp(&cfg), &cfg, &mut Rand::new(1));
         // Only conclusive notes survive the gate; with density 0 most bars are
         // silent — assert we got far fewer than default.
-        let def = MelodyVoice::generate(&bp(&cfg), &cfg(), &mut Rand::new(1));
+        let def = MelodyVoice::generate(&bp(&GenerateConfig::default()), &GenerateConfig::default(), &mut Rand::new(1));
         assert!(evs.len() < def.len());
     }
 

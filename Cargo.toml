@@ -17,6 +17,10 @@ repository = "https://example.invalid/synaptic-sapphire"
 
 [workspace.dependencies]
 thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+midly = "0.5"
+tinyaudio = "2"
 
 [profile.release]
 lto = "thin"

@@ -10,7 +10,7 @@
 use clap::{Parser, Subcommand};
 use midi_gen::config::GenerateConfig;
 use midi_gen::pipeline::generate_song;
-use midi_gen::preview::{render_song, write_wav};
+use midi_gen::preview::render_song;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -89,15 +89,20 @@ enum Cmd {
 #[allow(clippy::too_many_arguments)]
 fn build_cfg(seed: u64, bars: u32, bpm: f64, key_bias: &str, style: &str, swing: f64, density: f64, groove: f64, file: Option<&PathBuf>) -> anyhow::Result<GenerateConfig> {
     let mut cfg = match file {
-        Some(p) => GenerateConfig::from_file(p)?,
+        Some(p) => {
+            let text = std::fs::read_to_string(p)
+                .map_err(|e| anyhow::anyhow!("cannot read config {}: {e}", p.display()))?;
+            serde_json::from_str(&text)
+                .map_err(|e| anyhow::anyhow!("invalid JSON config {}: {e}", p.display()))?
+        }
         None => GenerateConfig::default(),
     };
     cfg.seed = seed;
     cfg.arrangement.bars_hint = bars;
     cfg.tempo_bpm = bpm;
     cfg.key_bias = parse_key_bias(key_bias);
-    cfg.chords.progression_style = style.to_string();
-    cfg.humanize.swing_strength = swing;
+    cfg.chords.progression_style = parse_style(style);
+    cfg.humanize.swing = swing;
     cfg.melody.density_scale = density;
     cfg.drums.groove_intensity = groove;
     Ok(cfg)
@@ -110,6 +115,17 @@ fn parse_key_bias(s: &str) -> midi_gen::config::KeyBias {
         "bright" => Bright,
         "dark" => Dark,
         _ => LofiMinor,
+    }
+}
+
+fn parse_style(s: &str) -> midi_gen::config::ProgressionStyle {
+    use midi_gen::config::ProgressionStyle::*;
+    match s {
+        "neo_soul" => NeoSoul,
+        "ambient" => Ambient,
+        "bluesy" => Bluesy,
+        "mixed" => Mixed,
+        _ => LofiJazz,
     }
 }
 

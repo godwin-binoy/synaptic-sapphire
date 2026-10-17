@@ -4,22 +4,22 @@
 //! voice with delta-encoded note-on/note-off events. Notes that overlap on the
 //! same channel are split so every `note_off` matches the latest `note_on`.
 
-use crate::music::{NoteEvent, Song, Track};
+use crate::music::{NoteEvent, Song, Track, PPQ};
 
-/// Ticks per quarter note written into the header (matches `music::PPQ`).
-const division: u16 = 480;
+/// Ticks per quarter note written into the SMF header (matches `music::PPQ`).
+const DIVISION: u16 = PPQ as u16;
 
 /// Serialise a whole [`Song`] to SMF bytes.
 pub fn to_midi_bytes(song: &Song) -> Vec<u8> {
     let mut out = Vec::with_capacity(4096);
 
-    // --- MThd: format 1, n+1 tracks, 480 PPQ -------------------------------
+    // --- MThd: format 1, n+1 tracks, PPQ division --------------------------
     let ntracks = (song.tracks.len() + 1) as u16;
     out.extend_from_slice(b"MThd");
     out.extend_from_slice(&4u32.to_be_bytes());
     out.extend_from_slice(&1u16.to_be_bytes());
     out.extend_from_slice(&ntracks.to_be_bytes());
-    out.extend_from_slice(&division.to_be_bytes());
+    out.extend_from_slice(&DIVISION.to_be_bytes());
 
     // --- conductor track: tempo + time signature ----------------------------
     let mut meta = Vec::new();
@@ -79,7 +79,7 @@ fn track_events(track: &Track) -> Vec<u8> {
     }
 
     let total = evs.iter().map(|(t, _)| *t).max().unwrap_or(0);
-    evs.push((total + division as i64, vec![0xFF, 0x2F, 0x00])); // EOT
+    evs.push((total + DIVISION as i64, vec![0xFF, 0x2F, 0x00])); // EOT
 
     // Delta-encode.
     evs.sort_by_key(|(t, _)| *t);
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(&bytes[0..4], b"MThd");
         assert_eq!(&bytes[8..10], &[0, 1]); // format 1
         assert_eq!(&bytes[10..12], &[0, 5]); // 4 voices + conductor
-        assert_eq!(&bytes[12..14], &division.to_be_bytes());
+        assert_eq!(&bytes[12..14], &DIVISION.to_be_bytes());
     }
 
     #[test]

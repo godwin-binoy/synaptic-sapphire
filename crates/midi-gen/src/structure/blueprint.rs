@@ -128,7 +128,7 @@ impl Section {
 }
 
 /// Complete arrangement contract consumed by all voice generators.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SongBlueprint {
     pub title_seed: u64,
     pub tempo_bpm: f64,
@@ -200,7 +200,7 @@ impl SongBlueprint {
 
         // --- Energy curve: later sections ramp up by `energy_curve`. --------
         let n = kinds.len().max(1) as f64;
-        let style_base = Style::from_config(cfg.chords.progression_style.as_str());
+        let style_base = Style::from_config(cfg.chords.progression_style.as_key());
         let mut sections: Vec<Section> = Vec::new();
         for (i, (kind, bars)) in kinds.into_iter().enumerate() {
             let progress = i as f64 / (n - 1.0).max(f64::EPSILON); // 0..1
@@ -222,7 +222,7 @@ impl SongBlueprint {
             let style = match style_base {
                 Style::Mixed => {
                     const POOL: [Style; 4] = [Style::LofiJazz, Style::NeoSoul, Style::Ambient, Style::Bluesy];
-                    *rng.pick(&POOL).expect("non-empty")
+                    rng.pick(&POOL).expect("non-empty")
                 }
                 s => s,
             };

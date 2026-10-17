@@ -17,6 +17,26 @@ impl Rand {
         Rand { state: seed }
     }
 
+    /// Derive an independent sub-stream from a master seed plus a domain tag.
+    ///
+    /// Each generation stage (blueprint, drums, bass, chords, melody) draws
+    /// from its own derived stream, so adding or disabling one voice can never
+    /// shift the random sequence of another — compositions stay reproducible
+    /// even as the engine grows.
+    pub fn derive(seed: u64, tag: &[u8]) -> Self {
+        // splitmix-style avalanche over (tag, seed): cheap, deterministic and
+        // decorrelated enough to serve as independent per-voice streams.
+        let mut h = 0xcbf2_9ce4_8422_2325u64; // FNV offset basis
+        for &b in tag.iter().chain(&seed.to_le_bytes()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100_0000_01b3); // FNV prime
+        }
+        h ^= h >> 33;
+        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        h ^= h >> 29;
+        Rand::new(h)
+    }
+
     /// Raw next u64 in the stream.
     pub fn next_u64(&mut self) -> u64 {
         // splitmix64: tiny, fast, excellent statistical quality for music.

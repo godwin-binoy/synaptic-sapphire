@@ -75,6 +75,19 @@ impl Default for ProgressionStyle {
     }
 }
 
+impl ProgressionStyle {
+    /// Stable string key used by the JSON config & schema enums.
+    pub fn as_key(self) -> &'static str {
+        match self {
+            ProgressionStyle::LofiJazz => "lofi_jazz",
+            ProgressionStyle::NeoSoul => "neo_soul",
+            ProgressionStyle::Ambient => "ambient",
+            ProgressionStyle::Bluesy => "bluesy",
+            ProgressionStyle::Mixed => "mixed",
+        }
+    }
+}
+
 /// Chord comping (Rhodes/pads) parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

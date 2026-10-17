@@ -11,7 +11,6 @@ pub use blueprint::{BarRole, Energy, Section, SectionKind, SongBlueprint};
 
 use crate::config::KeyBias;
 use crate::rng::Rand;
-use crate::theory::progression::plan_progression;
 use crate::theory::scale::Scale;
 
 /// Reasonable lofi tempo band (BPM).
@@ -40,14 +39,14 @@ pub fn pick_key(rng: &mut Rand, bias: KeyBias) -> (Scale, usize) {
     let tonic = match bias {
         KeyBias::LofiMinor | KeyBias::Dark => {
             if rng.chance(3, 4) {
-                *rng.pick(&favours_dark).expect("non-empty")
+                rng.pick(&favours_dark).expect("non-empty")
             } else {
                 rng.range_i64(0, 12) as usize
             }
         }
         KeyBias::Bright => {
             if rng.chance(3, 4) {
-                *rng.pick(&favours_bright).expect("non-empty")
+                rng.pick(&favours_bright).expect("non-empty")
             } else {
                 rng.range_i64(0, 12) as usize
             }
@@ -106,6 +105,7 @@ mod tests {
 
     #[test]
     fn plan_progression_import_works() {
+        use crate::theory::progression::plan_progression;
         let (scale, tonic) = pick_key(&mut Rand::new(1), KeyBias::LofiMinor);
         let plan = plan_progression(&mut Rand::new(2), &scale, tonic, 8);
         assert_eq!(plan.total_bars(), 8);

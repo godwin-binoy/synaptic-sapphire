@@ -24,6 +24,7 @@
 pub mod config;
 pub mod music;
 pub mod pipeline;
+pub mod preview;
 pub mod rng;
 pub mod structure;
 pub mod theory;
@@ -35,10 +36,9 @@ pub use config::{
     GenerateConfig, HumanizeConfig, KeyBias, MelodyConfig, MoodPreset, SchemaField, SchemaOption,
 };
 pub use music::{Chord, NoteEvent, NoteOn, Parts, Pitch, TempoMark, Ticks, PPQ};
-pub use pipeline::{
-    compose, compose_with_config, render_midi_to_bytes, Composition, GenerateError, MidiWriteError,
-    Track,
-};
+pub use music::{Song, Track};
+pub use pipeline::{generate_song, to_midi_bytes, GenerationError, GenerationOutput};
+pub use preview::{preview, render_song, wav_bytes, RenderedAudio};
 pub use rng::Rand;
 pub use structure::{Energy, SectionKind, SongBlueprint};
 pub use theory::{ChordQuality, ChordSpec, HarmonicPlan, Scale};

@@ -96,7 +96,7 @@ impl Voice for DrumsVoice {
             if is_fill {
                 for (i, key) in [TOM_HI, TOM_LO, SNARE].into_iter().enumerate() {
                     let pos_beats = 3.0 + i as f64 * 0.25;
-                    plain(&mut out, rng, d, *key, at, pos_beats, swing, Parts::division(8).to_ticks(), scale(88 - i as u8 * 6, factor, d));
+                    plain(&mut out, rng, d, key, at, pos_beats, swing, Parts::division(8).to_ticks(), scale(88 - i as u8 * 6, factor, d));
                 }
             }
 

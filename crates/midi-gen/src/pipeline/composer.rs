@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::config::GenerateConfig;
-use crate::music::{NoteEvent, Parts, Song, Track};
+use crate::config::{ConfigError, GenerateConfig};
+use crate::music::{NoteEvent, Parts, Song, Ticks};
 use crate::rng::Rand;
 use crate::structure::SongBlueprint;
 use crate::voices::Voice;
@@ -11,8 +11,10 @@ use crate::voices::Voice;
 /// Anything that can stop a render.
 #[derive(Debug, thiserror::Error)]
 pub enum GenerationError {
-    #[error("config produced an empty song (all voices disabled?)" )]
+    #[error("config produced an empty song (all voices disabled?)")]
     EmptySong,
+    #[error("invalid configuration: {0}")]
+    Config(#[from] ConfigError),
     #[error("could not write output file: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -36,6 +38,7 @@ impl GenerationOutput {
 pub fn generate_song(cfg: &GenerateConfig) -> Result<GenerationOutput, GenerationError> {
     let mut cfg = cfg.clone();
     cfg.clamp_all();
+    cfg.validate()?;
 
     // Each stage draws from its own stream so enabling/disabling one voice
     // never changes another's output.
@@ -48,12 +51,12 @@ pub fn generate_song(cfg: &GenerateConfig) -> Result<GenerationOutput, Generatio
         build_track::<crate::voices::chords::ChordsVoice>(&bp, &cfg, b"chords"),
         build_track::<crate::voices::melody::MelodyVoice>(&bp, &cfg, b"melody"),
     ];
-    let total_bars = bp.total_bars() as usize;
+    let total_bars = bp.total_bars() as i64;
     let song = Song::new(
         format!("lofi seed {}", cfg.seed),
         cfg.tempo_bpm,
         4,
-        total_bars * Parts::beats(4).to_ticks(),
+        Ticks(total_bars * Parts::beats(4).to_ticks().as_i64()),
         tracks,
     );
 
@@ -68,10 +71,10 @@ pub fn generate_song(cfg: &GenerateConfig) -> Result<GenerationOutput, Generatio
     })
 }
 
-fn build_track<V: Voice>(bp: &SongBlueprint, cfg: &GenerateConfig, tag: &'static [u8]) -> Track {
+fn build_track<V: Voice>(bp: &SongBlueprint, cfg: &GenerateConfig, tag: &'static [u8]) -> crate::music::Track {
     let mut rng = Rand::derive(cfg.seed, tag);
     let events = V::generate(bp, cfg, &mut rng);
-    Track { name: V::NAME.to_string(), channel: channel_for(tag), program: V::PROGRAM, events }
+    crate::music::Track { name: V::NAME.to_string(), channel: channel_for(tag), program: V::PROGRAM, events }
 }
 
 /// Fixed GM channel map: drums on 10, melodic voices on 1/3/5.
@@ -155,7 +158,7 @@ mod tests {
         let mut cfg = GenerateConfig::default();
         cfg.arrangement.bars_hint = 8;
         cfg.humanize.timing_jitter_ticks = 30;
-        cfg.humanize.swing_strength = 0.6;
+        cfg.humanize.swing = 0.6;
         cfg.melody.density_scale = 2.0;
         cfg.drums.groove_intensity = 2.0;
         let out = generate_song(&cfg).unwrap();

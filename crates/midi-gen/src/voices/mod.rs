@@ -29,7 +29,7 @@ pub trait Voice {
 
 /// Tick position of global bar `bar`.
 #[inline]
-pub fn bar_start(bp: &SongBlueprint, bar: u32) -> Ticks {
+pub fn bar_start(_bp: &SongBlueprint, bar: u32) -> Ticks {
     Ticks(bar as i64 * 4 * crate::music::PPQ as i64)
 }
 

@@ -27,7 +27,7 @@ pub(crate) fn pc_distance(from: usize, to: usize) -> usize {
 }
 
 /// Whether a triad's third is minor, given its root and third pitch classes.
-pub(crate) fn third_is_minor(root_pc: usize, third_pc: usize) -> bool {
+pub fn third_is_minor(root_pc: usize, third_pc: usize) -> bool {
     pc_distance(root_pc, third_pc) == 3
 }
 

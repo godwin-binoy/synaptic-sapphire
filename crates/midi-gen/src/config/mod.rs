@@ -19,7 +19,7 @@ pub use generate_config::{
     ArrangementConfig, BassConfig, ChordsConfig, DrumsConfig, HumanizeConfig, KeyBias,
     MelodyConfig, MoodPreset, ProgressionStyle,
 };
-pub use schema::{ConfigSchema, SchemaField, SchemaKind, SchemaOption};
+pub use schema::{ConfigSchema, SchemaField, SchemaGroup, SchemaKind, SchemaOption};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -171,19 +171,36 @@ impl GenerateConfig {
         (self.humanize.swing * (0.5 + self.drums.swing_strength / 2.0)).clamp(0.0, 1.0)
     }
 
-    /// Validate semantics that clamping cannot fix (unknown enum strings...).
+    /// Validate semantics that clamping cannot fix (unknown scale names, ...).
     pub fn validate(&self) -> Result<(), ConfigError> {
-        const SCALES: [&str; 6] =
-        ["major", "minor", "dorian", "mixolydian", "lydian", "harmonic minor"];
         if let Some(s) = &self.scale {
-            if !SCALES.contains(&s.as_str()) {
+            if crate::theory::Scale::by_name(s).is_none() {
+                let names: Vec<&str> = crate::theory::Scale::ALL.iter().map(|x| x.name).collect();
                 return Err(ConfigError::Invalid {
                     field: "scale".into(),
-                    reason: format!("unknown scale `{s}`, expected one of {SCALES:?}"),
+                    reason: format!("unknown scale `{s}`, expected one of {names:?}"),
                 });
             }
         }
         Ok(())
+    }
+
+    /// Load a configuration from a JSON file. Unknown fields are rejected so
+    /// typos surface immediately instead of silently falling back to defaults.
+    pub fn from_json_file(path: &std::path::Path) -> Result<Self, ConfigError> {
+        let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Invalid {
+            field: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        Self::from_json_str(&text)
+    }
+
+    /// Parse a configuration from a JSON string (strict about unknown fields).
+    pub fn from_json_str(text: &str) -> Result<Self, ConfigError> {
+        serde_json::from_str(text).map_err(|e| ConfigError::Invalid {
+            field: "json".into(),
+            reason: e.to_string(),
+        })
     }
 
     /// A fully-described, machine-readable schema of every knob. The web UI
@@ -228,7 +245,7 @@ mod tests {
         cfg.tempo_bpm = 1e9;
         cfg.arrangement.bars_hint = 0;
         cfg.melody.register_low = 200;
-        cfg.drums.velocity_base = 999;
+        cfg.drums.velocity_base = 255; // u8 saturates above 127 in clamp_all
         cfg.humanize.swing = -5.0;
         cfg.clamp_all();
         assert!((40.0..=140.0).contains(&cfg.tempo_bpm));
@@ -242,9 +259,9 @@ mod tests {
     fn rejects_unknown_scale_name() {
         let mut cfg = GenerateConfig::default();
         cfg.scale = Some("lydian".into());
-        assert!(cfg.validate().is_err());
-        cfg.scale = Some("dorian".into());
         assert!(cfg.validate().is_ok());
+        cfg.scale = Some("whole tone".into());
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

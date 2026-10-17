@@ -144,7 +144,7 @@ fn place_in_register(pitch_class: usize, prev_root: Option<usize>, lo: i32, hi: 
         .unwrap_or((lo + hi) / 2);
     let best = *candidates
         .iter()
-        .min_by_key(|c| (c - anchor).abs())
+        .min_by_key(|c| (*c - anchor).abs())
         .expect("non-empty candidates");
     Pitch(best.clamp(0, 127) as u8)
 }
@@ -171,7 +171,7 @@ fn approach_pitch(from: &Pitch, target: &Pitch, lo: i32, hi: i32) -> Pitch {
     let cand = Pitch(below.clamp(lo, hi).clamp(0, 127) as u8);
     // Avoid awkward leaps: if the approach is far from where we are, use the
     // whole-tone below instead.
-    if from.interval_to(&cand).abs() > 9 {
+    if from.interval_to(cand).abs() > 9 {
         let alt = (target.midi() as i32 - 2).clamp(lo, hi);
         Pitch(alt.clamp(0, 127) as u8)
     } else {

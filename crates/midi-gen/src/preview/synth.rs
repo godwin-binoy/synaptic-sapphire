@@ -97,9 +97,9 @@ fn render_note(channel: u8, n: &NoteOn, bpm: f64, buf: &mut [f32]) {
     let vel = n.velocity as f32 / 127.0;
     match channel {
         10 => render_drum(n.pitch.midi(), vel, start, buf),
-        3 => render_bass(n.pitch.freq_hz(), vel, start, dur, buf),
-        5 => render_rhodes(n.pitch.freq_hz(), vel, start, dur, buf),
-        _ => render_lead(n.pitch.freq_hz(), vel, start, dur, buf),
+        3 => render_bass(n.pitch.freq_hz() as f32, vel, start, dur, buf),
+        5 => render_rhodes(n.pitch.freq_hz() as f32, vel, start, dur, buf),
+        _ => render_lead(n.pitch.freq_hz() as f32, vel, start, dur, buf),
     }
 }
 
@@ -195,7 +195,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             add_voice(buf, start, frames, vel * 0.9, 0.0, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
                 let f = 150.0 * (-t * 28.0).exp() + 45.0;
-                (std::f64::consts::TAU * f * t).sin() * (-t * 14.0).exp()
+                ((std::f64::consts::TAU * f * t).sin() * (-t * 14.0).exp()) as f32
             });
         }
         38 | 37 => {
@@ -204,8 +204,8 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             let seed = start as u64;
             add_voice(buf, start, frames, vel * 0.55, -0.1, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
-                let nz = hash_noise(seed, i) * (-t * 22.0).exp();
-                let body = (std::f64::consts::TAU * 190.0 * t).sin() as f32 * (-t * 30.0).exp();
+                let nz = hash_noise(seed, i) * (-t * 22.0).exp() as f32;
+                let body = (std::f64::consts::TAU * 190.0 * t).sin() as f32 * (-t * 30.0).exp() as f32;
                 nz * 0.7 + body * 0.5
             });
         }
@@ -215,7 +215,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             let seed = start as u64 ^ 0x9E37;
             add_voice(buf, start, frames, vel * 0.32, 0.25, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
-                hash_noise(seed, i) * (-t * 60.0).exp()
+                hash_noise(seed, i) * (-t * 60.0).exp() as f32
             });
         }
         46 => {
@@ -224,7 +224,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             let seed = start as u64 ^ 0x51ED;
             add_voice(buf, start, frames, vel * 0.3, 0.3, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
-                hash_noise(seed, i) * (-t * 12.0).exp()
+                hash_noise(seed, i) * (-t * 12.0).exp() as f32
             });
         }
         49 => {
@@ -233,7 +233,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             let seed = start as u64 ^ 0xC0FFEE;
             add_voice(buf, start, frames, vel * 0.35, -0.3, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
-                hash_noise(seed, i) * (-t * 4.0).exp()
+                hash_noise(seed, i) * (-t * 4.0).exp() as f32
             });
         }
         50 | 45 => {
@@ -243,7 +243,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             add_voice(buf, start, frames, vel * 0.6, 0.1, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
                 let f = base * (-t * 10.0).exp() + 60.0;
-                (std::f64::consts::TAU * f * t).sin() * (-t * 12.0).exp()
+                ((std::f64::consts::TAU * f * t).sin() * (-t * 12.0).exp()) as f32
             });
         }
         70 => {
@@ -252,7 +252,7 @@ fn render_drum(key: u8, vel: f32, start: usize, buf: &mut [f32]) {
             let seed = start as u64 ^ 0x2D95;
             add_voice(buf, start, frames, vel * 0.18, 0.4, move |i| {
                 let t = i as f64 / SAMPLE_RATE as f64;
-                hash_noise(seed, i) * (-t * 90.0).exp()
+                hash_noise(seed, i) * (-t * 90.0).exp() as f32
             });
         }
         _ => {}
