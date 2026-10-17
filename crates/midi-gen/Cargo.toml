@@ -1,0 +1,21 @@
+[package]
+name = "midi-gen"
+description = "Algorithmic, deterministic MIDI composition engine for ambient/lofi music generation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "midi_gen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "midi-gen"
+path = "src/main.rs"
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]

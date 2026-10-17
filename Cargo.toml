@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/midi-gen"]
+
+# Future members (planned, see README "Roadmap"):
+#   crates/audio-render  — offline synth/mixing engine consuming MIDI
+#   crates/video-render  — visualizer / loop compositor
+#   crates/pipeline      — orchestrator tying generation -> render -> publish
+#   crates/common        — shared clock/time/format utilities
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/synaptic-sapphire"
+
+[workspace.dependencies]
+thiserror = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
