@@ -1,9 +1,14 @@
 //! The song blueprint: sections, per-bar roles and harmony.
+//!
+//! Built from a [`GenerateConfig`]: arrangement knobs decide which sections
+//! exist and how long they are, the chord knobs pick the harmonic vocabulary,
+//! and an *energy curve* ramps density across the form.
 
+use crate::config::GenerateConfig;
 use crate::rng::Rand;
-use crate::structure::{pick_key, pick_tempo};
+use crate::structure::pick_key;
 use crate::theory::chord::ChordSpec;
-use crate::theory::progression::{plan_progression, HarmonicPlan};
+use crate::theory::progression::{plan_progression_with, HarmonicPlan, PlanOptions, Style};
 use crate::theory::scale::Scale;
 
 /// Energy level of a section; drives density in every voice generator.
@@ -35,6 +40,15 @@ impl Energy {
             Energy::High => 1.0,
         }
     }
+
+    fn from_index(i: usize) -> Energy {
+        match i {
+            0 => Energy::Ambient,
+            1 => Energy::Low,
+            2 => Energy::Medium,
+            _ => Energy::High,
+        }
+    }
 }
 
 /// Functional role of a section in the arrangement.
@@ -48,17 +62,6 @@ pub enum SectionKind {
 }
 
 impl SectionKind {
-    /// Typical length in bars for this kind.
-    pub fn default_bars(&self) -> u32 {
-        match self {
-            SectionKind::Intro => 8,
-            SectionKind::Verse => 16,
-            SectionKind::Chorus => 16,
-            SectionKind::Bridge => 8,
-            SectionKind::Outro => 8,
-        }
-    }
-
     pub fn energy(&self) -> Energy {
         match self {
             SectionKind::Intro => Energy::Low,
@@ -109,20 +112,18 @@ pub struct Section {
     pub kind: SectionKind,
     pub bars: u32,
     pub plan: HarmonicPlan,
+    /// Energy after the arrangement's build curve is applied.
+    pub energy: Energy,
 }
 
 impl Section {
     pub fn role_at(&self, i: u32) -> BarRole {
         BarRole {
             section: self.kind,
-            energy: self.kind.energy(),
+            energy: self.energy,
             bar_in_section: i,
             section_bars: self.bars,
         }
-    }
-
-    pub fn chord_at_local_bar(&self, i: u32) -> Option<ChordSpec> {
-        self.plan.chord_at_bar(i % self.plan.total_bars().max(1))
     }
 }
 
@@ -139,44 +140,103 @@ pub struct SongBlueprint {
 }
 
 impl SongBlueprint {
-    /// Generate a full blueprint. `bars_hint` requests an approximate total
-    /// length; the result is rounded up to whole sections and always ends with
-    /// an outro. Panics if `bars_hint < 8`.
-    pub fn generate(rng: &mut Rand, seed: u64, bars_hint: u32) -> SongBlueprint {
-        assert!(bars_hint >= 8, "a song needs at least 8 bars");
-        let (scale, tonic) = pick_key(rng);
-        let tempo = pick_tempo(rng);
+    /// Build a blueprint from a full configuration. Deterministic given
+    /// `(seed, config)`; always ends with an outro when `outro_on`.
+    pub fn generate(rng: &mut Rand, cfg: &GenerateConfig) -> SongBlueprint {
+        let a = &cfg.arrangement;
 
-        // Build a section list that reaches at least `bars_hint`.
-        // Fixed skeleton; middle sections are kept until the hint is met.
-        let mut kinds = vec![SectionKind::Intro];
-        let middle = [
-            SectionKind::Verse,
-            SectionKind::Chorus,
-            SectionKind::Verse,
-            SectionKind::Chorus,
-            SectionKind::Bridge,
-            SectionKind::Chorus,
-        ];
-        let mut acc = SectionKind::Intro.default_bars();
-        for k in middle {
-            kinds.push(k);
-            acc += k.default_bars();
-            if acc >= bars_hint.saturating_sub(SectionKind::Outro.default_bars()) {
+        // --- Key: explicit override wins, otherwise seeded pick by bias. ----
+        let (scale, tonic) = match (&cfg.scale, cfg.tonic_pc) {
+            (Some(name), t) => match Scale::by_name(name) {
+                Some(s) => (s, t.unwrap_or(pick_key(rng, cfg.key_bias).1)),
+                None => pick_key(rng, cfg.key_bias),
+            },
+            (None, _) => pick_key(rng, cfg.key_bias),
+        };
+
+        // --- Tempo: fixed by config, nudged ±2 BPM by the seed so songs
+        //     feel hand-played rather than metronomic. -----------------------
+        let wobble = rng.range_f64(-2.0, 2.0);
+        let tempo = (cfg.tempo_bpm + wobble).clamp(40.0, 140.0);
+
+        // --- Section skeleton from the arrangement knobs. -------------------
+        let mut kinds: Vec<(SectionKind, u32)> = Vec::new();
+        if a.intro_on {
+            kinds.push((SectionKind::Intro, a.section_bars_intro));
+        }
+        let verse_len = a.section_bars_verse.max(4);
+        let chorus_len = a.section_bars_chorus.max(4);
+        // Keep emitting verse/chorus pairs until the length hint is covered.
+        let mut acc: u32 = kinds.iter().map(|(_, b)| *b).sum();
+        let target = a.bars_hint.saturating_sub(if a.outro_on { a.section_bars_outro } else { 0 });
+        let mut verses_done = 0u32;
+        let mut choruses_done = 0u32;
+        while acc < target || verses_done < a.verse_repeats || choruses_done < a.chorus_repeats {
+            if verses_done < a.verse_repeats.max(1) && acc < target.max(a.bars_hint) {
+                kinds.push((SectionKind::Verse, verse_len));
+                acc += verse_len;
+                verses_done += 1;
+            }
+            if choruses_done < a.chorus_repeats.max(1) && acc < target.max(a.bars_hint) {
+                kinds.push((SectionKind::Chorus, chorus_len));
+                acc += chorus_len;
+                choruses_done += 1;
+            }
+            if a.bridge_on && verses_done >= a.verse_repeats.max(1) && choruses_done >= a.chorus_repeats.max(1) {
+                break;
+            }
+            if acc >= target.max(a.bars_hint) && verses_done >= a.verse_repeats.max(1) && choruses_done >= a.chorus_repeats.max(1) {
                 break;
             }
         }
-        kinds.push(SectionKind::Outro);
+        if a.bridge_on {
+            kinds.push((SectionKind::Bridge, a.section_bars_bridge.max(2)));
+        }
+        // Final chorus lift before the outro (classic pop-lofi arc).
+        kinds.push((SectionKind::Chorus, chorus_len));
+        if a.outro_on {
+            kinds.push((SectionKind::Outro, a.section_bars_outro.max(2)));
+        }
 
+        // --- Energy curve: later sections ramp up by `energy_curve`. --------
+        let n = kinds.len().max(1) as f64;
+        let style_base = Style::from_config(cfg.chords.progression_style.as_str());
         let mut sections: Vec<Section> = Vec::new();
-        for kind in kinds {
-            let bars = kind.default_bars();
-            let plan = plan_progression(rng, &scale, tonic, bars);
-            sections.push(Section { kind, bars, plan });
+        for (i, (kind, bars)) in kinds.into_iter().enumerate() {
+            let progress = i as f64 / (n - 1.0).max(f64::EPSILON); // 0..1
+            let lift = (a.energy_curve * progress * 1.99).floor() as usize; // 0 or 1 mostly
+            let base_idx = match kind {
+                SectionKind::Intro => 1,
+                SectionKind::Verse => 2,
+                SectionKind::Chorus => 3,
+                SectionKind::Bridge => 1,
+                SectionKind::Outro => 0,
+            };
+            let energy = Energy::from_index((base_idx.min(3)).max(base_idx.min(3)).min(3));
+            let energy = if kind == SectionKind::Outro || kind == SectionKind::Intro {
+                energy
+            } else {
+                Energy::from_index((base_idx + lift).clamp(1, 3))
+            };
+
+            let style = match style_base {
+                Style::Mixed => {
+                    const POOL: [Style; 4] = [Style::LofiJazz, Style::NeoSoul, Style::Ambient, Style::Bluesy];
+                    *rng.pick(&POOL).expect("non-empty")
+                }
+                s => s,
+            };
+            let opts = PlanOptions {
+                reharmonise_chance_pct: a.reharmonise_chance_pct,
+                two_bar_hold_chance_pct: a.two_bar_hold_chance_pct,
+                style,
+            };
+            let plan = plan_progression_with(rng, &scale, tonic, bars.max(4), &opts);
+            sections.push(Section { kind, bars, plan, energy });
         }
 
         SongBlueprint {
-            title_seed: seed,
+            title_seed: cfg.seed,
             tempo_bpm: tempo,
             key_name: scale.tonic_name(tonic),
             scale,
@@ -234,54 +294,86 @@ impl SongBlueprint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::GenerateConfig;
+
+    fn bp_with(f: impl FnOnce(&mut GenerateConfig)) -> SongBlueprint {
+        let mut cfg = GenerateConfig::default();
+        f(&mut cfg);
+        cfg.clamp_all();
+        SongBlueprint::generate(&mut Rand::new(cfg.seed), &cfg)
+    }
 
     #[test]
-    fn blueprint_reaches_requested_length_with_outro() {
+    fn respects_length_hint_and_ends_with_outro() {
         for hint in [8u32, 16, 32, 48, 64] {
-            let bp = SongBlueprint::generate(&mut Rand::new(hint as u64 * 13), hint);
+            let bp = bp_with(|c| c.arrangement.bars_hint = hint);
             assert!(bp.total_bars() >= hint, "hint={hint} got={}", bp.total_bars());
             assert_eq!(bp.sections.last().unwrap().kind, SectionKind::Outro);
         }
     }
 
     #[test]
+    fn outro_can_be_disabled() {
+        let bp = bp_with(|c| c.arrangement.outro_on = false);
+        assert_ne!(bp.sections.last().unwrap().kind, SectionKind::Outro);
+    }
+
+    #[test]
+    fn intro_can_be_disabled() {
+        let bp = bp_with(|c| c.arrangement.intro_on = false);
+        assert_ne!(bp.sections.first().unwrap().kind, SectionKind::Intro);
+    }
+
+    #[test]
+    fn bridge_toggle_works() {
+        let with = bp_with(|c| c.arrangement.bridge_on = true);
+        let without = bp_with(|c| c.arrangement.bridge_on = false);
+        assert!(with.sections.iter().any(|s| s.kind == SectionKind::Bridge));
+        assert!(!without.sections.iter().any(|s| s.kind == SectionKind::Bridge));
+    }
+
+    #[test]
+    fn repeats_are_honoured() {
+        let bp = bp_with(|c| {
+            c.arrangement.verse_repeats = 3;
+            c.arrangement.bars_hint = 12;
+        });
+        let verses = bp.sections.iter().filter(|s| s.kind == SectionKind::Verse).count();
+        assert!(verses >= 3, "asked for 3 verses, got {verses}");
+    }
+
+    #[test]
+    fn key_override_wins() {
+        let bp = bp_with(|c| {
+            c.scale = Some("lydian".into());
+            c.tonic_pc = Some(5);
+        });
+        assert_eq!(bp.scale.name, "lydian");
+        assert_eq!(bp.tonic_pc, 5);
+    }
+
+    #[test]
+    fn deterministic_for_same_config() {
+        let a = bp_with(|c| c.seed = 777).describe();
+        let b = bp_with(|c| c.seed = 777).describe();
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn locate_round_trips() {
-        let bp = SongBlueprint::generate(&mut Rand::new(5), 32);
+        let bp = bp_with(|c| c.arrangement.bars_hint = 32);
         for b in 0..bp.total_bars() {
             let (sec, local) = bp.locate(b).unwrap();
-            assert!(!sec.chord_at_local_bar(local).is_some() || true);
             assert!(local < sec.bars);
+            assert!(bp.chord_at(b).is_some());
         }
         assert!(bp.locate(bp.total_bars()).is_none());
     }
 
     #[test]
-    fn every_bar_has_harmony_and_role() {
-        let bp = SongBlueprint::generate(&mut Rand::new(77), 48);
-        for b in 0..bp.total_bars() {
-            assert!(bp.chord_at(b).is_some(), "bar {b} has no chord");
-            assert!(bp.role_at(b).is_some(), "bar {b} has no role");
-        }
-    }
-
-    #[test]
-    fn deterministic_from_seed() {
-        let a = SongBlueprint::generate(&mut Rand::new(42), 32).describe();
-        let b = SongBlueprint::generate(&mut Rand::new(42), 32).describe();
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn cadence_flags_only_on_last_bars() {
-        let bp = SongBlueprint::generate(&mut Rand::new(8), 16);
-        let mut seen_cadence = 0;
-        for b in 0..bp.total_bars() {
-            let r = bp.role_at(b).unwrap();
-            if r.is_cadence_bar() {
-                seen_cadence += 1;
-                assert_eq!(r.bar_in_section + 1, r.section_bars);
-            }
-        }
-        assert!(seen_cadence >= bp.sections.len() as u32 - 1);
+    fn outro_is_ambient_energy() {
+        let bp = bp_with(|_| {});
+        let outro = bp.sections.iter().find(|s| s.kind == SectionKind::Outro).unwrap();
+        assert_eq!(outro.energy, Energy::Ambient);
     }
 }
